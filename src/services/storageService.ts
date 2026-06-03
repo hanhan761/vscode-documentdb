@@ -171,10 +171,11 @@ class StorageImpl implements Storage {
     public async getItems<T extends Record<string, unknown>>(workspace: string): Promise<StorageItem<T>[]> {
         const items = await this.getOrLoadItems<T>(workspace);
 
-        // Hand back a shallow copy (including a copied secrets array) so that callers sharing the
-        // cached snapshot cannot affect one another by mutating the returned items.
+        // Hand back a defensive copy so callers sharing the cached snapshot cannot
+        // affect one another by mutating the returned items.
         return items.map((item) => ({
             ...item,
+            properties: item.properties ? { ...item.properties } : item.properties,
             secrets: item.secrets ? [...item.secrets] : item.secrets,
         }));
     }
@@ -190,15 +191,22 @@ class StorageImpl implements Storage {
             return cached.promise as unknown as Promise<StorageItem<T>[]>;
         }
 
-        const promise = this.loadItemsFromStorage<T>(workspace);
+        const loadPromise = this.loadItemsFromStorage<T>(workspace);
         const entry = {
-            promise: promise as unknown as Promise<StorageItem<Record<string, unknown>>[]>,
+            promise: loadPromise as unknown as Promise<StorageItem<Record<string, unknown>>[]>,
             timestamp: Date.now(),
         };
         this.getItemsCache.set(workspace, entry);
 
+        // On success, update the timestamp so the TTL is measured from when the
+        // data is actually available, not from when the load started.
+        void loadPromise.then(() => {
+            if (this.getItemsCache.get(workspace) === entry) {
+                entry.timestamp = Date.now();
+            }
+        });
         // Evict failed reads so we don't keep serving (or awaiting) a rejected promise.
-        void promise.catch(() => {
+        void loadPromise.catch(() => {
             if (this.getItemsCache.get(workspace) === entry) {
                 this.getItemsCache.delete(workspace);
             }

@@ -251,7 +251,7 @@ export class ConnectionStorageService {
      * Bump this constant ONLY when a new one-time cleanup/upgrade step is added that existing installs
      * must run exactly once; existing users will then re-run the cleanup pass a single time.
      */
-    private static readonly STORAGE_CLEANUP_VERSION = '0.8.1';
+    private static readonly STORAGE_CLEANUP_VERSION = '1';
 
     // Lazily-initialized underlying storage instance. We must not call StorageService.get
     // at module-load time because `ext.context` may not be available until the extension
@@ -410,6 +410,10 @@ export class ConnectionStorageService {
             if (completedVersion === this.STORAGE_CLEANUP_VERSION) {
                 context.telemetry.properties.cleanupSkipped = 'true';
                 context.telemetry.properties.cleanupVersion = completedVersion;
+                // Orphaned items can be created after cleanup (e.g. interrupted folder
+                // delete), so this check must still run on every activation regardless
+                // of whether the heavier migration steps have completed.
+                void this.cleanupOrphanedItems();
                 return;
             }
             context.telemetry.properties.cleanupSkipped = 'false';
